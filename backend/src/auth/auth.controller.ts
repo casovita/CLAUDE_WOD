@@ -27,6 +27,11 @@ export class AuthController {
   @UseGuards(AuthGuard('google'))
   googleCallback(@Req() req: Request, @Res() res: Response) {
     const user = req.user as GoogleUser;
+    console.log('[AUTH] callback user:', {
+      hasAccessToken: !!user?.accessToken,
+      accessTokenPrefix: user?.accessToken?.slice(0, 20),
+      hasRefreshToken: !!user?.refreshToken,
+    });
     const frontendUrl = this.config.get<string>('FRONTEND_URL', 'http://localhost:5173');
     const params = new URLSearchParams({
       access_token: user.accessToken,

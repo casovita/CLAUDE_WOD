@@ -1,9 +1,9 @@
-import { NavLink, useLocation } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import {
   AppShell,
   Burger,
   Group,
-  NavLink as MantineNavLink,
+  NavLink,
   Text,
   ActionIcon,
   useMantineColorScheme,
@@ -47,34 +47,32 @@ export function Layout({ children }: LayoutProps) {
         <Group h="100%" px="md" justify="space-between">
           <Group>
             <Burger opened={opened} onClick={toggle} hiddenFrom="sm" size="sm" />
-            <Text fw={700} size="lg" c="violet">
-              WOD Analytics
-            </Text>
+            <Text fw={700} size="lg" c="violet">WOD Analytics</Text>
           </Group>
-          <ActionIcon
-            variant="subtle"
-            onClick={toggleColorScheme}
-            size="lg"
-            aria-label="Toggle colour scheme"
-          >
+          <ActionIcon variant="subtle" onClick={toggleColorScheme} size="lg" aria-label="Toggle colour scheme">
             {colorScheme === 'dark' ? <IconSun size={18} /> : <IconMoon size={18} />}
           </ActionIcon>
         </Group>
       </AppShell.Header>
 
       <AppShell.Navbar p="xs">
-        {NAV_ITEMS.map(({ path, label, icon: Icon }) => (
-          <NavLink key={path} to={path} onClick={close} style={{ textDecoration: 'none' }}>
-            {({ isActive }) => (
-              <MantineNavLink
-                active={isActive || (path !== '/' && location.pathname.startsWith(path))}
-                label={label}
-                leftSection={<Icon size={18} />}
-                mb={4}
-              />
-            )}
-          </NavLink>
-        ))}
+        {NAV_ITEMS.map(({ path, label, icon: Icon }) => {
+          const isActive = path === '/'
+            ? location.pathname === '/'
+            : location.pathname.startsWith(path);
+          return (
+            <NavLink
+              key={path}
+              component={Link}
+              to={path}
+              label={label}
+              leftSection={<Icon size={18} />}
+              active={isActive}
+              mb={4}
+              onClick={close}
+            />
+          );
+        })}
       </AppShell.Navbar>
 
       <AppShell.Main>

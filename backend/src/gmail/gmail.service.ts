@@ -31,12 +31,13 @@ export class GmailService {
   }
 
   async listExports(accessToken: string, refreshToken?: string): Promise<ExportSummary[]> {
+    console.log('[GMAIL] listExports token prefix:', accessToken?.slice(0, 20), 'len:', accessToken?.length);
     const gmail = this.createClient(accessToken, refreshToken);
     let response;
     try {
       response = await gmail.users.messages.list({
         userId: 'me',
-        q: 'from:hello@sugarwod.com subject:"Your SugarWOD Export" has:attachment',
+        q: 'from:sugarwod.com has:attachment',
         maxResults: 20,
       });
     } catch {
