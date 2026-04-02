@@ -1,5 +1,5 @@
-import { useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useEffect, useRef } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Center, Loader, Stack, Text } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { IconCheck, IconX } from '@tabler/icons-react';
@@ -7,12 +7,17 @@ import { useGmailAuth } from '../hooks/useGmailAuth';
 
 export function AuthCallbackPage() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { saveTokens } = useGmailAuth();
+  const handled = useRef(false);
 
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const accessToken = params.get('access_token');
-    const refreshToken = params.get('refresh_token') ?? '';
+    // Guard against React 18 StrictMode double-invocation
+    if (handled.current) return;
+    handled.current = true;
+
+    const accessToken = searchParams.get('access_token');
+    const refreshToken = searchParams.get('refresh_token') ?? '';
 
     if (accessToken) {
       saveTokens(accessToken, refreshToken);
@@ -32,7 +37,7 @@ export function AuthCallbackPage() {
       });
       navigate('/upload');
     }
-  }, [navigate, saveTokens]);
+  }, [navigate, saveTokens, searchParams]);
 
   return (
     <Center mih={400}>

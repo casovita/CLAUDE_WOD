@@ -101,13 +101,12 @@ export function WorkoutLogPage({ workouts }: WorkoutLogPageProps) {
               <Table.Th></Table.Th>
             </Table.Tr>
           </Table.Thead>
-          <Table.Tbody>
-            {paginated.map((w, i) => {
+          {paginated.map((w, i) => {
               const idx = (page - 1) * PAGE_SIZE + i;
               const isOpen = expandedRow === idx;
               return (
-                <>
-                  <Table.Tr key={`row-${idx}`}>
+                <Table.Tbody key={`group-${idx}`}>
+                  <Table.Tr>
                     <Table.Td>
                       <Text size="sm" c="dimmed" style={{ whiteSpace: 'nowrap' }}>
                         {dayjs(w.date).format('MMM D, YYYY')}
@@ -149,7 +148,7 @@ export function WorkoutLogPage({ workouts }: WorkoutLogPageProps) {
                     </Table.Td>
                   </Table.Tr>
                   {isOpen && (
-                    <Table.Tr key={`expand-${idx}`}>
+                    <Table.Tr>
                       <Table.Td colSpan={6}>
                         <Box p="sm" bg="var(--mantine-color-default-hover)" style={{ borderRadius: 8 }}>
                           {w.description && (
@@ -162,10 +161,9 @@ export function WorkoutLogPage({ workouts }: WorkoutLogPageProps) {
                       </Table.Td>
                     </Table.Tr>
                   )}
-                </>
+                </Table.Tbody>
               );
             })}
-          </Table.Tbody>
         </Table>
       </Paper>
 

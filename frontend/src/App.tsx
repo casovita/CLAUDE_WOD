@@ -6,6 +6,7 @@ import { StrengthPage } from './pages/StrengthPage';
 import { PRBoardPage } from './pages/PRBoardPage';
 import { WorkoutLogPage } from './pages/WorkoutLogPage';
 import { UploadPage } from './pages/UploadPage';
+import { HeatmapPage } from './pages/HeatmapPage';
 import { AuthCallbackPage } from './pages/AuthCallbackPage';
 
 export default function App() {
@@ -19,6 +20,7 @@ export default function App() {
           <Route path="/strength" element={<StrengthPage workouts={workouts} />} />
           <Route path="/prs" element={<PRBoardPage workouts={workouts} />} />
           <Route path="/log" element={<WorkoutLogPage workouts={workouts} />} />
+          <Route path="/heatmap" element={<HeatmapPage workouts={workouts} />} />
           <Route
             path="/upload"
             element={

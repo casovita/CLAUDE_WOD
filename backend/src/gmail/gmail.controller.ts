@@ -3,10 +3,11 @@ import {
   Get,
   Param,
   Req,
+  Res,
   UnauthorizedException,
 } from '@nestjs/common';
 import { ApiOperation, ApiTags, ApiBearerAuth } from '@nestjs/swagger';
-import type { Request } from 'express';
+import type { Request, Response } from 'express';
 import { GmailService } from './gmail.service';
 
 function extractTokens(req: Request): { accessToken: string; refreshToken?: string } {
@@ -19,6 +20,14 @@ function extractTokens(req: Request): { accessToken: string; refreshToken?: stri
   return { accessToken, refreshToken };
 }
 
+/** If the service silently refreshed the token, surface it so the client can update localStorage. */
+function setRefreshedToken(res: Response, newAccessToken?: string) {
+  if (newAccessToken) {
+    res.setHeader('X-New-Access-Token', newAccessToken);
+    res.setHeader('Access-Control-Expose-Headers', 'X-New-Access-Token');
+  }
+}
+
 @ApiTags('gmail')
 @ApiBearerAuth()
 @Controller('gmail')
@@ -27,15 +36,23 @@ export class GmailController {
 
   @Get('exports')
   @ApiOperation({ summary: 'List SugarWOD export emails in Gmail' })
-  listExports(@Req() req: Request) {
+  async listExports(@Req() req: Request, @Res() res: Response) {
     const { accessToken, refreshToken } = extractTokens(req);
-    return this.gmailService.listExports(accessToken, refreshToken);
+    const result = await this.gmailService.listExports(accessToken, refreshToken);
+    setRefreshedToken(res, result.newAccessToken);
+    res.json(result.data);
   }
 
   @Get('exports/:messageId')
   @ApiOperation({ summary: 'Fetch and parse a SugarWOD export email by message ID' })
-  fetchExport(@Param('messageId') messageId: string, @Req() req: Request) {
+  async fetchExport(
+    @Param('messageId') messageId: string,
+    @Req() req: Request,
+    @Res() res: Response,
+  ) {
     const { accessToken, refreshToken } = extractTokens(req);
-    return this.gmailService.fetchExport(messageId, accessToken, refreshToken);
+    const result = await this.gmailService.fetchExport(messageId, accessToken, refreshToken);
+    setRefreshedToken(res, result.newAccessToken);
+    res.json(result.data);
   }
 }

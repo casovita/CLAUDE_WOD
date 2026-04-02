@@ -1,4 +1,4 @@
-import { Injectable, UnauthorizedException, NotFoundException } from '@nestjs/common';
+import { Injectable, UnauthorizedException, NotFoundException, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { google } from 'googleapis';
 import { WorkoutsService } from '../workouts/workouts.service';
@@ -10,14 +10,22 @@ export interface ExportSummary {
   snippet: string;
 }
 
+export interface GmailResult<T> {
+  data: T;
+  /** New access token if the old one was silently refreshed, otherwise undefined */
+  newAccessToken?: string;
+}
+
 @Injectable()
 export class GmailService {
+  private readonly logger = new Logger(GmailService.name);
+
   constructor(
     private readonly config: ConfigService,
     private readonly workoutsService: WorkoutsService,
   ) {}
 
-  private createClient(accessToken: string, refreshToken?: string) {
+  private createOAuth2Client(accessToken: string, refreshToken?: string) {
     const auth = new google.auth.OAuth2(
       this.config.getOrThrow<string>('GOOGLE_CLIENT_ID'),
       this.config.getOrThrow<string>('GOOGLE_CLIENT_SECRET'),
@@ -27,25 +35,62 @@ export class GmailService {
       access_token: accessToken,
       refresh_token: refreshToken,
     });
-    return google.gmail({ version: 'v1', auth });
+    return auth;
   }
 
-  async listExports(accessToken: string, refreshToken?: string): Promise<ExportSummary[]> {
-    console.log('[GMAIL] listExports token prefix:', accessToken?.slice(0, 20), 'len:', accessToken?.length);
-    const gmail = this.createClient(accessToken, refreshToken);
-    let response;
-    try {
-      response = await gmail.users.messages.list({
+  /** Attempt to refresh the access token using the refresh token. */
+  private async refreshAccessToken(refreshToken: string): Promise<string> {
+    const auth = this.createOAuth2Client('', refreshToken);
+    const { credentials } = await auth.refreshAccessToken();
+    if (!credentials.access_token) {
+      throw new UnauthorizedException('Failed to refresh Gmail access token. Please reconnect.');
+    }
+    this.logger.log('Access token refreshed successfully');
+    return credentials.access_token;
+  }
+
+  async listExports(accessToken: string, refreshToken?: string): Promise<GmailResult<ExportSummary[]>> {
+    let currentToken = accessToken;
+    let newAccessToken: string | undefined;
+
+    const tryList = async (token: string) => {
+      const auth = this.createOAuth2Client(token, refreshToken);
+      const gmail = google.gmail({ version: 'v1', auth });
+      return gmail.users.messages.list({
         userId: 'me',
         q: 'from:sugarwod.com has:attachment',
         maxResults: 20,
       });
-    } catch {
-      throw new UnauthorizedException('Gmail token is invalid or expired. Please reconnect.');
+    };
+
+    let response;
+    try {
+      response = await tryList(currentToken);
+    } catch (err: any) {
+      const status = err?.code ?? err?.status ?? err?.response?.status;
+
+      // Try silent token refresh when we have a refresh token
+      if ((status === 401 || status === 403) && refreshToken) {
+        this.logger.warn('Access token expired — attempting refresh');
+        try {
+          currentToken = await this.refreshAccessToken(refreshToken);
+          newAccessToken = currentToken;
+          response = await tryList(currentToken);
+        } catch (refreshErr: any) {
+          this.logger.error(`Token refresh failed: ${refreshErr?.message}`);
+          throw new UnauthorizedException('Gmail token is invalid or expired. Please reconnect.');
+        }
+      } else {
+        this.logger.error(`Gmail API error: ${err?.message} code: ${status}`, err?.stack);
+        throw new UnauthorizedException('Gmail token is invalid or expired. Please reconnect.');
+      }
     }
 
     const messages = response.data.messages ?? [];
-    if (messages.length === 0) return [];
+    if (messages.length === 0) return { data: [], newAccessToken };
+
+    const auth = this.createOAuth2Client(currentToken, refreshToken);
+    const gmail = google.gmail({ version: 'v1', auth });
 
     const summaries = await Promise.all(
       messages.map(async (msg) => {
@@ -67,29 +112,44 @@ export class GmailService {
       }),
     );
 
-    return summaries;
+    return { data: summaries, newAccessToken };
   }
 
-  async fetchExport(messageId: string, accessToken: string, refreshToken?: string) {
-    const gmail = this.createClient(accessToken, refreshToken);
+  async fetchExport(messageId: string, accessToken: string, refreshToken?: string): Promise<GmailResult<{ messageId: string; count: number; workouts: unknown[] }>> {
+    let currentToken = accessToken;
+    let newAccessToken: string | undefined;
 
-    let message;
+    const tryFetch = async (token: string) => {
+      const auth = this.createOAuth2Client(token, refreshToken);
+      const gmail = google.gmail({ version: 'v1', auth });
+      return { gmail, message: await gmail.users.messages.get({ userId: 'me', id: messageId, format: 'full' }) };
+    };
+
+    let gmail: ReturnType<typeof google.gmail>;
+    let message: Awaited<ReturnType<typeof google.gmail.prototype.users.messages.get>>;
+
     try {
-      message = await gmail.users.messages.get({
-        userId: 'me',
-        id: messageId,
-        format: 'full',
-      });
-    } catch {
-      throw new UnauthorizedException('Gmail token is invalid or expired. Please reconnect.');
+      ({ gmail, message } = await tryFetch(currentToken));
+    } catch (err: any) {
+      const status = err?.code ?? err?.status ?? err?.response?.status;
+      if ((status === 401 || status === 403) && refreshToken) {
+        this.logger.warn('Access token expired during fetchExport — attempting refresh');
+        try {
+          currentToken = await this.refreshAccessToken(refreshToken);
+          newAccessToken = currentToken;
+          ({ gmail, message } = await tryFetch(currentToken));
+        } catch {
+          throw new UnauthorizedException('Gmail token is invalid or expired. Please reconnect.');
+        }
+      } else {
+        this.logger.error(`Gmail API error (fetchExport): ${err?.message} code: ${status}`, err?.stack);
+        throw new UnauthorizedException('Gmail token is invalid or expired. Please reconnect.');
+      }
     }
 
     const csvPart = this.findCsvPart(message.data.payload);
-    if (!csvPart) {
-      throw new NotFoundException('No CSV attachment found in this message.');
-    }
+    if (!csvPart) throw new NotFoundException('No CSV attachment found in this message.');
 
-    // The part body data may be in the part itself or need a separate attachment fetch
     let b64Data = csvPart.body?.data;
     if (!b64Data && csvPart.body?.attachmentId) {
       const attachment = await gmail.users.messages.attachments.get({
@@ -100,24 +160,16 @@ export class GmailService {
       b64Data = attachment.data.data;
     }
 
-    if (!b64Data) {
-      throw new NotFoundException('Could not retrieve CSV attachment data.');
-    }
+    if (!b64Data) throw new NotFoundException('Could not retrieve CSV attachment data.');
 
-    // Gmail uses base64url encoding
     const csvText = Buffer.from(b64Data, 'base64url').toString('utf-8');
     const workouts = this.workoutsService.parseCSV(csvText);
-    return { messageId, count: workouts.length, workouts };
+    return { data: { messageId, count: workouts.length, workouts }, newAccessToken };
   }
 
-  private findCsvPart(
-    payload: any,
-  ): any | null {
+  private findCsvPart(payload: any): any | null {
     if (!payload) return null;
-    if (
-      payload.mimeType === 'text/csv' ||
-      (payload.filename as string | undefined)?.endsWith('.csv')
-    ) {
+    if (payload.mimeType === 'text/csv' || (payload.filename as string | undefined)?.endsWith('.csv')) {
       return payload;
     }
     for (const part of payload.parts ?? []) {

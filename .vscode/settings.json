@@ -1,0 +1,7 @@
+{
+  "files.exclude": {
+    "backend/dist": true,
+    "**/*.js.map": true,
+    "**/*.tsbuildinfo": true
+  }
+}

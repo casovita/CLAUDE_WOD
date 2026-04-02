@@ -28,7 +28,7 @@ import {
 } from '@tabler/icons-react';
 import { useNavigate } from 'react-router-dom';
 import { parseCSV } from '../lib/parseWorkouts';
-import { uploadEml, listGmailExports, fetchGmailExport, type ExportSummary } from '../lib/api';
+import { uploadEml, listGmailExports, fetchGmailExport, ApiError, type ExportSummary } from '../lib/api';
 import { useGmailAuth } from '../hooks/useGmailAuth';
 import type { Workout } from '../types/workout';
 import dayjs from 'dayjs';
@@ -39,24 +39,41 @@ interface UploadPageProps {
 }
 
 export function UploadPage({ onImport, currentCount }: UploadPageProps) {
+  const IMPORTED_IDS_KEY = 'wod_imported_message_ids';
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [gmailExports, setGmailExports] = useState<ExportSummary[]>([]);
   const [gmailLoading, setGmailLoading] = useState(false);
   const [importingId, setImportingId] = useState<string | null>(null);
+  const [importedIds, setImportedIds] = useState<Set<string>>(() => {
+    try {
+      const raw = localStorage.getItem(IMPORTED_IDS_KEY);
+      return new Set(raw ? JSON.parse(raw) : []);
+    } catch {
+      return new Set();
+    }
+  });
   const navigate = useNavigate();
   const { connected, connect, disconnect } = useGmailAuth();
 
+  const loadGmailExports = useCallback(() => {
+    setGmailLoading(true);
+    listGmailExports()
+      .then((data) => setGmailExports(data))
+      .catch((err) => {
+        if (err instanceof ApiError && err.status === 401) {
+          disconnect();
+        }
+        setGmailExports([]);
+      })
+      .finally(() => setGmailLoading(false));
+  }, [disconnect]);
+
   // Load Gmail exports when connected
   useEffect(() => {
-    if (connected) {
-      setGmailLoading(true);
-      listGmailExports()
-        .then((r) => setGmailExports(r.data))
-        .catch(() => setGmailExports([]))
-        .finally(() => setGmailLoading(false));
-    }
-  }, [connected]);
+    if (connected) loadGmailExports();
+  }, [connected, loadGmailExports]);
 
   const handleFile = useCallback(
     async (files: File[]) => {
@@ -69,8 +86,8 @@ export function UploadPage({ onImport, currentCount }: UploadPageProps) {
 
         // Try backend first (handles EML server-side with mailparser)
         try {
-          const response = await uploadEml(file);
-          workouts = response.data.workouts as Workout[];
+          const data = await uploadEml(file);
+          workouts = data.workouts as Workout[];
         } catch {
           // Fallback: parse entirely in browser (works for .eml and .csv)
           const text = await file.text();
@@ -107,14 +124,21 @@ export function UploadPage({ onImport, currentCount }: UploadPageProps) {
     [onImport, navigate],
   );
 
+  const markImported = (messageId: string) => {
+    const updated = new Set(importedIds).add(messageId);
+    localStorage.setItem(IMPORTED_IDS_KEY, JSON.stringify([...updated]));
+    setImportedIds(updated);
+  };
+
   const handleGmailImport = async (messageId: string) => {
     setImportingId(messageId);
     setError(null);
     try {
-      const response = await fetchGmailExport(messageId);
-      const workouts = response.data.workouts as Workout[];
+      const data = await fetchGmailExport(messageId);
+      const workouts = data.workouts as Workout[];
       if (workouts.length === 0) throw new Error('No workouts found in this export.');
       onImport(workouts);
+      markImported(messageId);
       notifications.show({
         title: 'Import successful',
         message: `${workouts.length} workouts loaded from Gmail`,
@@ -227,13 +251,7 @@ export function UploadPage({ onImport, currentCount }: UploadPageProps) {
                       size="xs"
                       variant="subtle"
                       leftSection={<IconRefresh size={14} />}
-                      onClick={() => {
-                        setGmailLoading(true);
-                        listGmailExports()
-                          .then((r) => setGmailExports(r.data))
-                          .catch(() => setGmailExports([]))
-                          .finally(() => setGmailLoading(false));
-                      }}
+                      onClick={loadGmailExports}
                     >
                       Refresh
                     </Button>
@@ -252,27 +270,34 @@ export function UploadPage({ onImport, currentCount }: UploadPageProps) {
                   </Alert>
                 ) : (
                   <Stack gap="sm">
-                    {gmailExports.map((exp) => (
-                      <Card key={exp.messageId} withBorder radius="md" p="md">
-                        <Group justify="space-between">
-                          <div>
-                            <Text fw={500} size="sm">{exp.subject}</Text>
-                            <Text size="xs" c="dimmed">{dayjs(exp.date).format('MMM D, YYYY')}</Text>
-                            {exp.snippet && (
-                              <Text size="xs" c="dimmed" mt={2} lineClamp={1}>{exp.snippet}</Text>
-                            )}
-                          </div>
-                          <Button
-                            size="sm"
-                            variant="light"
-                            loading={importingId === exp.messageId}
-                            onClick={() => handleGmailImport(exp.messageId)}
-                          >
-                            Import
-                          </Button>
-                        </Group>
-                      </Card>
-                    ))}
+                    {gmailExports.map((exp) => {
+                      const alreadyImported = importedIds.has(exp.messageId);
+                      return (
+                        <Card key={exp.messageId} withBorder radius="md" p="md">
+                          <Group justify="space-between">
+                            <div>
+                              <Group gap="xs" mb={2}>
+                                <Text fw={500} size="sm">{exp.subject}</Text>
+                                {alreadyImported && <Badge size="xs" color="green" variant="light">Imported</Badge>}
+                              </Group>
+                              <Text size="xs" c="dimmed">{dayjs(exp.date).format('MMM D, YYYY')}</Text>
+                              {exp.snippet && (
+                                <Text size="xs" c="dimmed" mt={2} lineClamp={1}>{exp.snippet}</Text>
+                              )}
+                            </div>
+                            <Button
+                              size="sm"
+                              variant="light"
+                              disabled={alreadyImported}
+                              loading={importingId === exp.messageId}
+                              onClick={() => handleGmailImport(exp.messageId)}
+                            >
+                              {alreadyImported ? 'Imported' : 'Import'}
+                            </Button>
+                          </Group>
+                        </Card>
+                      );
+                    })}
                   </Stack>
                 )}
               </Stack>

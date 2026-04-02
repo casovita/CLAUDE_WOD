@@ -1,4 +1,4 @@
-import { Controller, Get, Req, Res, UseGuards } from '@nestjs/common';
+import { Controller, Get, Logger, Req, Res, UseGuards } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
@@ -12,6 +12,8 @@ interface GoogleUser {
 @ApiTags('auth')
 @Controller('auth')
 export class AuthController {
+  private readonly logger = new Logger(AuthController.name);
+
   constructor(private readonly config: ConfigService) {}
 
   @Get('google')
@@ -27,11 +29,7 @@ export class AuthController {
   @UseGuards(AuthGuard('google'))
   googleCallback(@Req() req: Request, @Res() res: Response) {
     const user = req.user as GoogleUser;
-    console.log('[AUTH] callback user:', {
-      hasAccessToken: !!user?.accessToken,
-      accessTokenPrefix: user?.accessToken?.slice(0, 20),
-      hasRefreshToken: !!user?.refreshToken,
-    });
+    this.logger.log(`OAuth callback: hasAccessToken=${!!user?.accessToken} tokenPrefix=${user?.accessToken?.slice(0, 20)} hasRefreshToken=${!!user?.refreshToken}`);
     const frontendUrl = this.config.get<string>('FRONTEND_URL', 'http://localhost:5173');
     const params = new URLSearchParams({
       access_token: user.accessToken,
