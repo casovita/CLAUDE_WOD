@@ -1,9 +1,11 @@
-import { Suspense, useEffect, useRef, Component, type ReactNode } from 'react';
-import { Canvas, useThree } from '@react-three/fiber';
+import { Suspense, useEffect, useRef, useMemo, Component, type ReactNode } from 'react';
+import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls, useFBX, Center } from '@react-three/drei';
 import { Text, Stack, Code, Anchor, Alert, Loader, Box } from '@mantine/core';
 import * as THREE from 'three';
 import type { MuscleId } from './MuscleBody3D';
+import type { GapData } from '../types/muscleGap';
+import { GAP_COLORS, GAP_EMISSIVE } from '../types/muscleGap';
 
 // ── Color helpers ────────────────────────────────────────────────────────────
 
@@ -12,7 +14,14 @@ function getMuscleColor(
   activeMuscles: Set<MuscleId> | null,
   muscleCounts: Map<MuscleId, number>,
   maxCount: number,
+  gapMode?: boolean,
+  gapData?: GapData | null,
 ): string | null {
+  if (gapMode && gapData) {
+    const entry = gapData.entries.find(e => e.id === id);
+    if (!entry) return null;
+    return GAP_COLORS[entry.status];
+  }
   if (activeMuscles !== null) {
     return activeMuscles.has(id) ? '#7950f2' : null;
   }
@@ -87,16 +96,26 @@ interface ModelProps {
   muscleCounts: Map<MuscleId, number>;
   maxCount: number;
   isDark: boolean;
+  gapMode?: boolean;
+  gapData?: GapData | null;
+  highlightedMuscle?: MuscleId | null;
 }
 
 const INACTIVE_COLOR_DARK = new THREE.Color('#1e2028');
 const INACTIVE_COLOR_LIGHT = new THREE.Color('#c4cad4');
 
-function BodyModelInner({ activeMuscles, muscleCounts, maxCount, isDark }: ModelProps) {
-  const fbx = useFBX('/MuscularSystem100.fbx');
+function BodyModelInner({
+  activeMuscles, muscleCounts, maxCount, isDark,
+  gapMode, gapData, highlightedMuscle,
+}: ModelProps) {
+  const fbxSource = useFBX('/MuscularSystem100.fbx');
+  // Clone once per mount so each panel gets its own scene graph + materials
+  const fbx = useMemo(() => fbxSource.clone(true), [fbxSource]);
   const materialsRef = useRef<Map<THREE.Mesh, THREE.MeshStandardMaterial>>(new Map());
+  const pulseMeshesRef = useRef<Map<THREE.Mesh, 'neglected' | 'highlighted'>>(new Map());
+  const elapsedRef = useRef(0);
 
-  // Initialise: assign one custom material per mesh, log names for debugging
+  // Initialise: assign one custom material per mesh
   useEffect(() => {
     const map = materialsRef.current;
     fbx.traverse(obj => {
@@ -116,13 +135,20 @@ function BodyModelInner({ activeMuscles, muscleCounts, maxCount, isDark }: Model
   // Recolour whenever muscle state changes
   useEffect(() => {
     const inactiveColor = isDark ? INACTIVE_COLOR_DARK : INACTIVE_COLOR_LIGHT;
+    pulseMeshesRef.current.clear();
+
     materialsRef.current.forEach((mat, mesh) => {
       const muscleId = detectMuscle(mesh.name);
-      const hex = muscleId ? getMuscleColor(muscleId, activeMuscles, muscleCounts, maxCount) : null;
+      const hex = muscleId
+        ? getMuscleColor(muscleId, activeMuscles, muscleCounts, maxCount, gapMode, gapData)
+        : null;
 
       if (hex) {
         mat.color.set(hex);
-        mat.emissive.set('#5f3dc4');
+        const emissiveHex = gapMode && muscleId && gapData
+          ? GAP_EMISSIVE[gapData.entries.find(e => e.id === muscleId)!.status]
+          : '#5f3dc4';
+        mat.emissive.set(emissiveHex);
         mat.emissiveIntensity = 0.2;
         mat.transparent = false;
         mat.opacity = 1;
@@ -134,8 +160,36 @@ function BodyModelInner({ activeMuscles, muscleCounts, maxCount, isDark }: Model
         mat.opacity = isDark ? 0.12 : 0.25;
       }
       mat.needsUpdate = true;
+
+      // Track meshes that need per-frame animation
+      if (muscleId) {
+        if (gapMode && gapData) {
+          const status = gapData.entries.find(e => e.id === muscleId)?.status;
+          if (status === 'neglected') {
+            pulseMeshesRef.current.set(mesh, 'neglected');
+            return;
+          }
+        }
+        if (highlightedMuscle && muscleId === highlightedMuscle && hex) {
+          pulseMeshesRef.current.set(mesh, 'highlighted');
+        }
+      }
     });
-  }, [activeMuscles, muscleCounts, maxCount, isDark]);
+  }, [activeMuscles, muscleCounts, maxCount, isDark, gapMode, gapData, highlightedMuscle]);
+
+  // Pulse animation for neglected/highlighted muscles
+  useFrame((_, delta) => {
+    elapsedRef.current += delta;
+    pulseMeshesRef.current.forEach((type, mesh) => {
+      const mat = materialsRef.current.get(mesh);
+      if (!mat) return;
+      if (type === 'neglected') {
+        mat.emissiveIntensity = 0.35 + 0.20 * Math.sin(elapsedRef.current * Math.PI * 3);
+      } else if (type === 'highlighted') {
+        mat.emissiveIntensity = 0.45 + 0.15 * Math.sin(elapsedRef.current * Math.PI * 6);
+      }
+    });
+  });
 
   return (
     <Center>
@@ -212,6 +266,9 @@ export interface MuscleBodyModelProps {
   maxCount: number;
   isDark: boolean;
   height?: number;
+  gapMode?: boolean;
+  gapData?: GapData | null;
+  highlightedMuscle?: MuscleId | null;
 }
 
 export function MuscleBodyModel({
@@ -220,6 +277,9 @@ export function MuscleBodyModel({
   maxCount,
   isDark,
   height = 500,
+  gapMode,
+  gapData,
+  highlightedMuscle,
 }: MuscleBodyModelProps) {
   return (
     <GLTFErrorBoundary fallback={<DownloadFallback />}>
@@ -240,6 +300,9 @@ export function MuscleBodyModel({
               muscleCounts={muscleCounts}
               maxCount={maxCount}
               isDark={isDark}
+              gapMode={gapMode}
+              gapData={gapData}
+              highlightedMuscle={highlightedMuscle}
             />
             <AutoCamera />
           </Suspense>
