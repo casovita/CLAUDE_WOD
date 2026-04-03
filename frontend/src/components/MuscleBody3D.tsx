@@ -1,6 +1,10 @@
-import { Canvas } from '@react-three/fiber';
+import { useRef, type ReactNode } from 'react';
+import { Canvas, useFrame } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import { Text } from '@mantine/core';
+import * as THREE from 'three';
+import type { GapData } from '../types/muscleGap';
+import { GAP_COLORS, GAP_EMISSIVE } from '../types/muscleGap';
 
 export type MuscleId =
   | 'frontDelts' | 'rearDelts' | 'chest' | 'biceps' | 'triceps'
@@ -13,6 +17,9 @@ export interface MuscleBody3DProps {
   maxCount: number;
   isDark: boolean;
   height?: number;
+  gapMode?: boolean;
+  gapData?: GapData | null;
+  highlightedMuscle?: MuscleId | null;
 }
 
 function getMuscleColor(
@@ -20,7 +27,14 @@ function getMuscleColor(
   activeMuscles: Set<MuscleId> | null,
   muscleCounts: Map<MuscleId, number>,
   maxCount: number,
+  gapMode?: boolean,
+  gapData?: GapData | null,
 ): string | null {
+  if (gapMode && gapData) {
+    const entry = gapData.entries.find(e => e.id === id);
+    if (!entry) return null;
+    return GAP_COLORS[entry.status];
+  }
   if (activeMuscles !== null) {
     return activeMuscles.has(id) ? '#7950f2' : null;
   }
@@ -43,21 +57,51 @@ interface MuscleMeshProps {
   muscleCounts: Map<MuscleId, number>;
   maxCount: number;
   isDark: boolean;
-  children: React.ReactNode;
+  gapMode?: boolean;
+  gapData?: GapData | null;
+  highlightedMuscle?: MuscleId | null;
+  children: ReactNode;
 }
 
-function MuscleMesh({ id, position, rotation, activeMuscles, muscleCounts, maxCount, isDark, children }: MuscleMeshProps) {
-  const color = getMuscleColor(id, activeMuscles, muscleCounts, maxCount);
+function MuscleMesh({
+  id, position, rotation, activeMuscles, muscleCounts, maxCount, isDark,
+  gapMode, gapData, highlightedMuscle, children,
+}: MuscleMeshProps) {
+  const color = getMuscleColor(id, activeMuscles, muscleCounts, maxCount, gapMode, gapData);
   const inactiveColor = isDark ? '#3a3d47' : '#b8bec8';
+
+  const gapEntry = gapMode && gapData ? gapData.entries.find(e => e.id === id) : null;
+  const isNeglected = gapEntry?.status === 'neglected';
+  const isHighlighted = highlightedMuscle === id && !!color;
+
+  const emissiveColor = gapMode && gapEntry
+    ? GAP_EMISSIVE[gapEntry.status]
+    : (color ? '#5f3dc4' : '#000000');
+
+  const matRef = useRef<THREE.MeshStandardMaterial>(null);
+  const elapsedRef = useRef(0);
+
+  useFrame((_, delta) => {
+    elapsedRef.current += delta;
+    if (!matRef.current) return;
+    if (isNeglected) {
+      matRef.current.emissiveIntensity = 0.35 + 0.20 * Math.sin(elapsedRef.current * Math.PI * 3);
+    } else if (isHighlighted) {
+      matRef.current.emissiveIntensity = 0.45 + 0.15 * Math.sin(elapsedRef.current * Math.PI * 6);
+    } else {
+      matRef.current.emissiveIntensity = color ? 0.18 : 0;
+    }
+  });
 
   return (
     <mesh position={position} rotation={rotation ?? [0, 0, 0]}>
       {children}
       <meshStandardMaterial
+        ref={matRef}
         color={color ?? inactiveColor}
         roughness={0.6}
         metalness={0.05}
-        emissive={color ? '#5f3dc4' : '#000000'}
+        emissive={emissiveColor}
         emissiveIntensity={color ? 0.18 : 0}
         transparent={!color}
         opacity={color ? 1 : 0.35}
@@ -72,12 +116,15 @@ interface BodyProps {
   muscleCounts: Map<MuscleId, number>;
   maxCount: number;
   isDark: boolean;
+  gapMode?: boolean;
+  gapData?: GapData | null;
+  highlightedMuscle?: MuscleId | null;
 }
 
-function AnatomyBody({ activeMuscles, muscleCounts, maxCount, isDark }: BodyProps) {
+function AnatomyBody({ activeMuscles, muscleCounts, maxCount, isDark, gapMode, gapData, highlightedMuscle }: BodyProps) {
   const bodyColor = isDark ? '#363a42' : '#c4cad4';
   const skinColor = isDark ? '#4a4e57' : '#c9a882';
-  const mp = { activeMuscles, muscleCounts, maxCount, isDark };
+  const mp = { activeMuscles, muscleCounts, maxCount, isDark, gapMode, gapData, highlightedMuscle };
 
   return (
     <group>
@@ -334,7 +381,10 @@ function AnatomyBody({ activeMuscles, muscleCounts, maxCount, isDark }: BodyProp
   );
 }
 
-export function MuscleBody3D({ activeMuscles, muscleCounts, maxCount, isDark, height = 500 }: MuscleBody3DProps) {
+export function MuscleBody3D({
+  activeMuscles, muscleCounts, maxCount, isDark, height = 500,
+  gapMode, gapData, highlightedMuscle,
+}: MuscleBody3DProps) {
   return (
     <div style={{ position: 'relative' }}>
       <Canvas
@@ -351,6 +401,9 @@ export function MuscleBody3D({ activeMuscles, muscleCounts, maxCount, isDark, he
           muscleCounts={muscleCounts}
           maxCount={maxCount}
           isDark={isDark}
+          gapMode={gapMode}
+          gapData={gapData}
+          highlightedMuscle={highlightedMuscle}
         />
         <OrbitControls
           target={[0, 0, 0]}

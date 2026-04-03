@@ -12,6 +12,7 @@ import {
   SimpleGrid,
   Progress,
   ThemeIcon,
+  SegmentedControl,
   useMantineColorScheme,
 } from '@mantine/core';
 import {
@@ -34,6 +35,8 @@ import isoWeek from 'dayjs/plugin/isoWeek';
 import dayOfYear from 'dayjs/plugin/dayOfYear';
 import { MuscleBodyModel } from '../components/MuscleBodyModel';
 import type { MuscleId } from '../components/MuscleBody3D';
+import type { GapData } from '../types/muscleGap';
+import { GAP_COLORS } from '../types/muscleGap';
 import {
   IconAlertTriangle,
   IconCircleCheck,
@@ -131,6 +134,8 @@ export function HeatmapPage({ workouts }: HeatmapPageProps) {
 
   const [selectedYear, setSelectedYear] = useState(() => String(dayjs().year()));
   const [selectedWorkouts, setSelectedWorkouts] = useState<Set<string>>(new Set());
+  const [highlightedMuscle, setHighlightedMuscle] = useState<MuscleId | null>(null);
+  const [gapTimeRange, setGapTimeRange] = useState<30 | 90 | 180 | 'all'>('all');
 
   const toggleWorkout = (name: string) =>
     setSelectedWorkouts(prev => {
@@ -179,6 +184,13 @@ export function HeatmapPage({ workouts }: HeatmapPageProps) {
   const yearWorkouts = workouts.filter(w => dayjs(w.date).year() === year);
   const totalSessions = yearWorkouts.length;
 
+  // Time-range filtered workouts for gap analysis (independent of year selector)
+  const gapWorkouts = useMemo(() => {
+    if (gapTimeRange === 'all') return yearWorkouts;
+    const cutoff = dayjs().subtract(gapTimeRange, 'day').toDate();
+    return workouts.filter(w => new Date(w.date) >= cutoff);
+  }, [yearWorkouts, workouts, gapTimeRange]);
+
   // Top workouts by frequency
   const topWorkouts = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -187,7 +199,7 @@ export function HeatmapPage({ workouts }: HeatmapPageProps) {
       .map(([name, count]) => ({ name, count }));
   }, [yearWorkouts]);
 
-  // Aggregate muscle counts + active muscles from multiselect
+  // Heatmap mode: muscle counts from selected year + multiselect filter
   const { muscleCounts, maxMuscleCount, activeMuscles } = useMemo(() => {
     const muscleCounts = new Map<MuscleId, number>();
     yearWorkouts.forEach(w => {
@@ -206,6 +218,46 @@ export function HeatmapPage({ workouts }: HeatmapPageProps) {
     return { muscleCounts, maxMuscleCount, activeMuscles };
   }, [yearWorkouts, selectedWorkouts]);
 
+  // Gap analysis data (recomputed from gapWorkouts for time-range sensitivity)
+  const { gapMuscleCounts, gapMaxMuscleCount, gapTotalSessions, muscleGaps, balanceScore, lastTrainedByMuscle } = useMemo(() => {
+    const gapMuscleCounts = new Map<MuscleId, number>();
+    gapWorkouts.forEach(w => {
+      getMusclesForTitle(w.title).forEach(m =>
+        gapMuscleCounts.set(m, (gapMuscleCounts.get(m) ?? 0) + 1)
+      );
+    });
+    const gapTotalSessions = gapWorkouts.length;
+    const gapMaxMuscleCount = Math.max(...Array.from(gapMuscleCounts.values()), 1);
+
+    const muscleGaps = ALL_MUSCLES.map(id => {
+      const count = gapMuscleCounts.get(id) ?? 0;
+      const pct = gapTotalSessions > 0 ? (count / gapTotalSessions * 100) : 0;
+      return { id, label: MUSCLE_LABELS[id], count, pct, status: coverageStatus(pct) };
+    }).sort((a, b) => a.pct - b.pct);
+
+    const goodCount = muscleGaps.filter(m => m.status === 'good').length;
+    const balanceScore = Math.round((goodCount / ALL_MUSCLES.length) * 100);
+
+    const lastTrainedByMuscle = new Map<MuscleId, string>();
+    const sorted = [...workouts].sort((a, b) => b.date.localeCompare(a.date));
+    for (const w of sorted) {
+      getMusclesForTitle(w.title).forEach(m => {
+        if (!lastTrainedByMuscle.has(m)) lastTrainedByMuscle.set(m, w.date);
+      });
+    }
+
+    return { gapMuscleCounts, gapMaxMuscleCount, gapTotalSessions, muscleGaps, balanceScore, lastTrainedByMuscle };
+  }, [gapWorkouts, workouts]);
+
+  const gapData: GapData = useMemo(() => ({
+    entries: muscleGaps,
+    totalSessions: gapTotalSessions,
+    timeRangeDays: gapTimeRange,
+  }), [muscleGaps, gapTotalSessions, gapTimeRange]);
+
+  const neglectedCount = muscleGaps.filter(m => m.status === 'neglected').length;
+  const lowCount       = muscleGaps.filter(m => m.status === 'low').length;
+
   // Radar chart data — normalised to 0-100
   const radarData = useMemo(() =>
     ALL_MUSCLES.map(id => ({
@@ -217,19 +269,6 @@ export function HeatmapPage({ workouts }: HeatmapPageProps) {
     })),
     [muscleCounts, totalSessions],
   );
-
-  // Muscle gap analysis
-  const muscleGaps = useMemo(() =>
-    ALL_MUSCLES.map(id => {
-      const count = muscleCounts.get(id) ?? 0;
-      const pct = totalSessions > 0 ? (count / totalSessions * 100) : 0;
-      return { id, label: MUSCLE_LABELS[id], count, pct, status: coverageStatus(pct) };
-    }).sort((a, b) => a.pct - b.pct),
-    [muscleCounts, totalSessions],
-  );
-
-  const neglectedCount = muscleGaps.filter(m => m.status === 'neglected').length;
-  const lowCount       = muscleGaps.filter(m => m.status === 'low').length;
 
   const barHeight = 26;
   const chartHeight = topWorkouts.length * barHeight + 20;
@@ -306,7 +345,7 @@ export function HeatmapPage({ workouts }: HeatmapPageProps) {
         </Box>
       </Paper>
 
-      {/* Workout frequency + 3D body */}
+      {/* ── Section 2: Workout frequency + Heatmap 3D ── */}
       <SimpleGrid cols={{ base: 1, md: 2 }} spacing="lg">
 
         {/* Frequency bar chart — multi-select */}
@@ -362,7 +401,7 @@ export function HeatmapPage({ workouts }: HeatmapPageProps) {
           </ResponsiveContainer>
         </Paper>
 
-        {/* 3D body map */}
+        {/* Heatmap 3D — frequency only */}
         <Paper withBorder p="md" radius="md">
           <Group justify="space-between" mb="xs">
             <Text fw={600}>Muscle Map 3D</Text>
@@ -387,44 +426,59 @@ export function HeatmapPage({ workouts }: HeatmapPageProps) {
         </Paper>
       </SimpleGrid>
 
-      {/* Muscle balance + gap analysis */}
+      {/* ── Section 3: Gap Analysis 3D + list ── */}
       <SimpleGrid cols={{ base: 1, md: 2 }} spacing="lg">
 
-        {/* Radar chart */}
+        {/* Gap Analysis 3D */}
         <Paper withBorder p="md" radius="md">
-          <Text fw={600} mb={4}>Muscle Balance Radar</Text>
-          <Text size="xs" c="dimmed" mb="sm">
-            % of sessions each muscle group was trained
-          </Text>
-          <ResponsiveContainer width="100%" height={320}>
-            <RadarChart data={radarData} margin={{ top: 10, right: 30, bottom: 10, left: 30 }}>
-              <PolarGrid stroke={gridColor} />
-              <PolarAngleAxis
-                dataKey="muscle"
-                tick={{ fill: textColor, fontSize: 10 }}
-              />
-              <Radar
-                dataKey="value"
-                stroke={radarColor}
-                fill={radarColor}
-                fillOpacity={0.3}
-                strokeWidth={2}
-                dot={{ r: 3, fill: radarColor }}
-              />
-              <RechartsTooltip
-                formatter={(v: number, _: string, p: { payload?: { fullLabel?: string } }) =>
-                  [`${v}% of sessions`, p.payload?.fullLabel ?? '']}
-                contentStyle={{
-                  background: isDark ? '#25262b' : '#fff',
-                  border: `1px solid ${isDark ? '#373a40' : '#dee2e6'}`,
-                  borderRadius: 8, fontSize: 12,
-                }}
-              />
-            </RadarChart>
-          </ResponsiveContainer>
+          <Group justify="space-between" mb="xs" align="center">
+            <div>
+              <Text fw={600}>Gap Analysis 3D</Text>
+              <Text size="xs" c="dimmed">Neglected muscles pulse red</Text>
+            </div>
+            <Badge
+              size="lg"
+              variant="filled"
+              color={balanceScore >= 80 ? 'green' : balanceScore >= 50 ? 'orange' : 'red'}
+              radius="xl"
+            >
+              Balance {balanceScore}%
+            </Badge>
+          </Group>
+          <SegmentedControl
+            size="xs"
+            fullWidth
+            mb="xs"
+            value={String(gapTimeRange)}
+            onChange={v => setGapTimeRange(v === 'all' ? 'all' : Number(v) as 30 | 90 | 180)}
+            data={[
+              { label: '30d', value: '30' },
+              { label: '90d', value: '90' },
+              { label: '180d', value: '180' },
+              { label: 'All', value: 'all' },
+            ]}
+          />
+          <MuscleBodyModel
+            activeMuscles={null}
+            muscleCounts={gapMuscleCounts}
+            maxCount={gapMaxMuscleCount}
+            isDark={isDark}
+            height={480}
+            gapMode={true}
+            gapData={gapData}
+            highlightedMuscle={highlightedMuscle}
+          />
+          <Group gap="md" justify="center" mt="xs">
+            {(['neglected', 'low', 'good'] as const).map(s => (
+              <Group key={s} gap={4}>
+                <Box style={{ width: 10, height: 10, borderRadius: '50%', background: GAP_COLORS[s] }} />
+                <Text size="xs" c="dimmed">{STATUS_META[s].label}</Text>
+              </Group>
+            ))}
+          </Group>
         </Paper>
 
-        {/* Gap analysis */}
+        {/* Gap analysis list */}
         <Paper withBorder p="md" radius="md">
           <Group justify="space-between" mb={4}>
             <Text fw={600}>Muscle Gap Analysis</Text>
@@ -438,32 +492,65 @@ export function HeatmapPage({ workouts }: HeatmapPageProps) {
             </Group>
           </Group>
           <Text size="xs" c="dimmed" mb="md">
-            Based on {totalSessions} sessions · target: each muscle in &gt;25% of sessions
+            Based on {gapTotalSessions} sessions · target: each muscle in &gt;25% · click to highlight
           </Text>
           <Stack gap={8}>
             {muscleGaps.map(({ id, label, pct, status }) => {
               const meta = STATUS_META[status];
+              const isSelected = highlightedMuscle === id;
               return (
-                <Box key={id}>
-                  <Group justify="space-between" mb={3}>
-                    <Group gap={6}>
-                      <ThemeIcon size={16} color={meta.color} variant="light" radius="xl">
-                        <meta.icon size={10} />
-                      </ThemeIcon>
-                      <Text size="xs" fw={status !== 'good' ? 600 : 400}
-                        c={status === 'neglected' ? 'red' : status === 'low' ? 'orange' : undefined}>
-                        {label}
+                <Tooltip
+                  key={id}
+                  label={
+                    <Stack gap={2}>
+                      <Text size="xs" fw={600}>{label}</Text>
+                      <Text size="xs">Status: {meta.label}</Text>
+                      <Text size="xs">{Math.round(pct)}% of sessions</Text>
+                      <Text size="xs">
+                        Last trained:{' '}
+                        {lastTrainedByMuscle.get(id)
+                          ? dayjs(lastTrainedByMuscle.get(id)).format('MMM D, YYYY')
+                          : 'Never'}
                       </Text>
+                    </Stack>
+                  }
+                  withArrow
+                  multiline
+                  position="left"
+                  w={180}
+                >
+                  <Box
+                    style={{
+                      cursor: 'pointer',
+                      borderRadius: 6,
+                      padding: '4px 6px',
+                      background: isSelected
+                        ? (isDark ? 'rgba(224,49,49,0.12)' : 'rgba(224,49,49,0.08)')
+                        : 'transparent',
+                      transition: 'background 0.2s',
+                    }}
+                    onClick={() => setHighlightedMuscle(prev => prev === id ? null : id)}
+                  >
+                    <Group justify="space-between" mb={3}>
+                      <Group gap={6}>
+                        <ThemeIcon size={16} color={meta.color} variant="light" radius="xl">
+                          <meta.icon size={10} />
+                        </ThemeIcon>
+                        <Text size="xs" fw={status !== 'good' ? 600 : 400}
+                          c={status === 'neglected' ? 'red' : status === 'low' ? 'orange' : undefined}>
+                          {label}
+                        </Text>
+                      </Group>
+                      <Text size="xs" c="dimmed">{Math.round(pct)}%</Text>
                     </Group>
-                    <Text size="xs" c="dimmed">{Math.round(pct)}%</Text>
-                  </Group>
-                  <Progress
-                    value={Math.min(pct, 100)}
-                    size="sm"
-                    color={status === 'neglected' ? 'red' : status === 'low' ? 'orange' : 'violet'}
-                    radius="xl"
-                  />
-                </Box>
+                    <Progress
+                      value={Math.min(pct, 100)}
+                      size="sm"
+                      color={status === 'neglected' ? 'red' : status === 'low' ? 'orange' : 'violet'}
+                      radius="xl"
+                    />
+                  </Box>
+                </Tooltip>
               );
             })}
           </Stack>
@@ -482,6 +569,40 @@ export function HeatmapPage({ workouts }: HeatmapPageProps) {
           </Group>
         </Paper>
       </SimpleGrid>
+
+      {/* ── Section 4: Muscle Balance Radar (bottom) ── */}
+      <Paper withBorder p="md" radius="md">
+        <Text fw={600} mb={4}>Muscle Balance Radar</Text>
+        <Text size="xs" c="dimmed" mb="sm">
+          % of sessions each muscle group was trained ({selectedYear})
+        </Text>
+        <ResponsiveContainer width="100%" height={320}>
+          <RadarChart data={radarData} margin={{ top: 10, right: 30, bottom: 10, left: 30 }}>
+            <PolarGrid stroke={gridColor} />
+            <PolarAngleAxis
+              dataKey="muscle"
+              tick={{ fill: textColor, fontSize: 10 }}
+            />
+            <Radar
+              dataKey="value"
+              stroke={radarColor}
+              fill={radarColor}
+              fillOpacity={0.3}
+              strokeWidth={2}
+              dot={{ r: 3, fill: radarColor }}
+            />
+            <RechartsTooltip
+              formatter={(v: number, _: string, p: { payload?: { fullLabel?: string } }) =>
+                [`${v}% of sessions`, p.payload?.fullLabel ?? '']}
+              contentStyle={{
+                background: isDark ? '#25262b' : '#fff',
+                border: `1px solid ${isDark ? '#373a40' : '#dee2e6'}`,
+                borderRadius: 8, fontSize: 12,
+              }}
+            />
+          </RadarChart>
+        </ResponsiveContainer>
+      </Paper>
     </Stack>
   );
 }
