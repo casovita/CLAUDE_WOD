@@ -33,7 +33,7 @@ interface StrengthPageProps {
 }
 
 // Epley 1RM formula: weight * (1 + reps / 30)
-function epley1RM(load: number, reps: number): number {
+export function epley1RM(load: number, reps: number): number {
   if (reps === 1) return load;
   return Math.round(load * (1 + reps / 30));
 }

@@ -160,7 +160,7 @@ export function useExerciseDb(): boolean {
 
 // ── Lookup helpers ────────────────────────────────────────────────────────────
 
-function normalise(s: string): string {
+export function normalise(s: string): string {
   return s
     .toLowerCase()
     .replace(/[^a-z0-9\s]/g, ' ')
@@ -169,7 +169,7 @@ function normalise(s: string): string {
 }
 
 /** Strip common set/weight notation so "Back Squat 3x3 @ 225#" → "back squat" */
-function stripMetadata(title: string): string {
+export function stripMetadata(title: string): string {
   return normalise(title)
     .replace(/\b\d+\s*x\s*\d+\b/g, '')   // "3x3"
     .replace(/\b\d+\s*(lbs?|kg|#)\b/g, '') // "225 lbs"

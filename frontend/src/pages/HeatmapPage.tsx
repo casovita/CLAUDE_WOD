@@ -63,7 +63,7 @@ const ALL_MUSCLES = Object.keys(MUSCLE_LABELS) as MuscleId[];
 const DAYS   = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
-function getHeatColor(count: number, max: number, isDark: boolean): string {
+export function getHeatColor(count: number, max: number, isDark: boolean): string {
   if (count === 0) return isDark ? '#2c2e33' : '#e9ecef';
   const t = Math.min(count / Math.max(max, 1), 1);
   if (t < 0.25) return '#9775fa';
@@ -76,7 +76,7 @@ function getHeatColor(count: number, max: number, isDark: boolean): string {
 const THRESHOLD_NEGLECTED = 10;  // < 10% → neglected
 const THRESHOLD_LOW       = 25;  // < 25% → light
 
-function coverageStatus(pct: number): 'neglected' | 'low' | 'good' {
+export function coverageStatus(pct: number): 'neglected' | 'low' | 'good' {
   if (pct < THRESHOLD_NEGLECTED) return 'neglected';
   if (pct < THRESHOLD_LOW)       return 'low';
   return 'good';
