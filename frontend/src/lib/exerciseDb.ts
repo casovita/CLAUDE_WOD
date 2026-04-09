@@ -66,7 +66,7 @@ const CF_ALIASES: [RegExp, string][] = [
   [/wall\s*ball/i,                       'Thruster'],
   [/burpee/i,                            'Burpees'],
   [/rope\s*climb/i,                      'Band Assisted Pull-Up'],
-  [/toes.{0,3}bar|ttb\b/i,             'Hanging Leg Raise'],
+  [/toes.{0,8}bar|ttb\b/i,             'Hanging Leg Raise'],
   [/kipping\s*pull/i,                    'Band Assisted Pull-Up'],
   [/assault\s*bike|echo\s*bike|air\s*bike/i, 'Bicycling, Stationary'],
   [/ski\s*erg/i,                         'Rowing, Stationary'],
@@ -120,7 +120,7 @@ let dbLoadPromise: Promise<void> | null = null;
 function buildIndex(records: ExerciseRecord[]): void {
   dbIndex = new Map();
   for (const r of records) {
-    dbIndex.set(r.name.toLowerCase(), r);
+    dbIndex.set(normalise(r.name), r);
   }
 }
 
@@ -138,6 +138,13 @@ export function loadExerciseDb(): Promise<void> {
       });
   }
   return dbLoadPromise!;
+}
+
+/** Reset module-level cache — only for use in tests. */
+export function _resetForTesting(): void {
+  dbCache = null;
+  dbIndex = null;
+  dbLoadPromise = null;
 }
 
 /** React hook — returns true once the exercise DB has loaded. */
