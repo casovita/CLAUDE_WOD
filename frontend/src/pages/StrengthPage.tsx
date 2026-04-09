@@ -10,8 +10,9 @@ import {
   SimpleGrid,
   Center,
   ThemeIcon,
+  Tooltip as MantineTooltip,
 } from '@mantine/core';
-import { IconBarbell } from '@tabler/icons-react';
+import { IconBarbell, IconStar } from '@tabler/icons-react';
 import {
   ResponsiveContainer,
   LineChart,
@@ -21,9 +22,11 @@ import {
   CartesianGrid,
   Tooltip,
   ReferenceDot,
+  ReferenceLine,
 } from 'recharts';
 import type { Workout } from '../types/workout';
 import dayjs from 'dayjs';
+import { getStrengthLevel, getStrengthStandards } from '../lib/exerciseDb';
 
 interface StrengthPageProps {
   workouts: Workout[];
@@ -103,7 +106,7 @@ export function StrengthPage({ workouts }: StrengthPageProps) {
         </Center>
       ) : (
         <>
-          <SimpleGrid cols={{ base: 2, sm: 4 }}>
+          <SimpleGrid cols={{ base: 2, sm: 5 }}>
             <Paper withBorder p="md" radius="md" ta="center">
               <Text size="xs" c="dimmed" tt="uppercase" fw={500}>Sessions</Text>
               <Text fw={700} size="xl">{liftWorkouts.length}</Text>
@@ -122,6 +125,28 @@ export function StrengthPage({ workouts }: StrengthPageProps) {
                 {progression >= 0 ? '+' : ''}{progression}%
               </Text>
             </Paper>
+            {selectedLift && (() => {
+              const level = getStrengthLevel(selectedLift, maxLoad);
+              const levelColors: Record<string, string> = {
+                beginner: 'gray', novice: 'blue', intermediate: 'teal',
+                advanced: 'violet', elite: 'yellow',
+              };
+              return (
+                <MantineTooltip label="Based on CrossFit strength standards (kg)" withArrow>
+                  <Paper withBorder p="md" radius="md" ta="center" style={{ cursor: 'default' }}>
+                    <Text size="xs" c="dimmed" tt="uppercase" fw={500}>Level</Text>
+                    {level ? (
+                      <Group justify="center" gap={4} mt={4}>
+                        <IconStar size={16} color={`var(--mantine-color-${levelColors[level]}-5)`} />
+                        <Text fw={700} size="lg" c={levelColors[level]} tt="capitalize">{level}</Text>
+                      </Group>
+                    ) : (
+                      <Text fw={700} size="xl" c="dimmed">—</Text>
+                    )}
+                  </Paper>
+                </MantineTooltip>
+              );
+            })()}
           </SimpleGrid>
 
           <Paper withBorder p="md" radius="md">
@@ -157,6 +182,26 @@ export function StrengthPage({ workouts }: StrengthPageProps) {
                     label={{ value: '★', position: 'top', fontSize: 12 }}
                   />
                 ))}
+                {selectedLift && (() => {
+                  const std = getStrengthStandards(selectedLift);
+                  if (!std) return null;
+                  const lines: { key: string; value: number; color: string; label: string }[] = [
+                    { key: 'novice',       value: std.novice,       color: '#74c0fc', label: 'Novice' },
+                    { key: 'intermediate', value: std.intermediate, color: '#63e6be', label: 'Inter.' },
+                    { key: 'advanced',     value: std.advanced,     color: '#b197fc', label: 'Advanced' },
+                    { key: 'elite',        value: std.elite,        color: '#ffd43b', label: 'Elite' },
+                  ];
+                  return lines.map(l => (
+                    <ReferenceLine
+                      key={l.key}
+                      y={l.value}
+                      stroke={l.color}
+                      strokeDasharray="4 3"
+                      strokeOpacity={0.7}
+                      label={{ value: l.label, position: 'insideTopRight', fontSize: 10, fill: l.color }}
+                    />
+                  ));
+                })()}
               </LineChart>
             </ResponsiveContainer>
           </Paper>

@@ -13,6 +13,7 @@ import {
 import { IconTrophy, IconMedal } from '@tabler/icons-react';
 import type { Workout } from '../types/workout';
 import dayjs from 'dayjs';
+import { getStrengthLevel } from '../lib/exerciseDb';
 
 interface PRBoardPageProps {
   workouts: Workout[];
@@ -109,12 +110,29 @@ export function PRBoardPage({ workouts }: PRBoardPageProps) {
                     {pr.display} kg
                   </Badge>
                 </Group>
-                <Text size="xs" c="dimmed">
-                  Set on {dayjs(pr.date).format('MMM D, YYYY')}
-                </Text>
-                <Text size="xs" c="dimmed" mt={2}>
-                  {pr.history.length} session{pr.history.length !== 1 ? 's' : ''} recorded
-                </Text>
+                <Group justify="space-between" align="center">
+                  <div>
+                    <Text size="xs" c="dimmed">
+                      Set on {dayjs(pr.date).format('MMM D, YYYY')}
+                    </Text>
+                    <Text size="xs" c="dimmed" mt={2}>
+                      {pr.history.length} session{pr.history.length !== 1 ? 's' : ''} recorded
+                    </Text>
+                  </div>
+                  {(() => {
+                    const level = getStrengthLevel(pr.lift, pr.load);
+                    if (!level) return null;
+                    const levelColors: Record<string, string> = {
+                      beginner: 'gray', novice: 'blue', intermediate: 'teal',
+                      advanced: 'violet', elite: 'yellow',
+                    };
+                    return (
+                      <Badge size="sm" variant="light" color={levelColors[level]} tt="capitalize">
+                        {level}
+                      </Badge>
+                    );
+                  })()}
+                </Group>
               </Paper>
             ))}
           </SimpleGrid>
