@@ -37,6 +37,7 @@ import { MuscleBodyModel } from '../components/MuscleBodyModel';
 import type { MuscleId } from '../components/MuscleBody3D';
 import type { GapData } from '../types/muscleGap';
 import { GAP_COLORS } from '../types/muscleGap';
+import { useExerciseDb, getWeightedMuscles, getMusclesSet } from '../lib/exerciseDb';
 import {
   IconAlertTriangle,
   IconCircleCheck,
@@ -56,45 +57,13 @@ const MUSCLE_LABELS: Record<MuscleId, string> = {
 
 const ALL_MUSCLES = Object.keys(MUSCLE_LABELS) as MuscleId[];
 
-// Rules applied in order — all matching rules are unioned
-const MUSCLE_RULES: [RegExp, MuscleId[]][] = [
-  [/squat/i,                        ['quads', 'glutes', 'hamstrings', 'abs']],
-  [/deadlift/i,                     ['hamstrings', 'glutes', 'lowerBack', 'traps']],
-  [/bench press/i,                  ['chest', 'frontDelts', 'triceps']],
-  [/overhead press|shoulder press|strict press/i, ['frontDelts', 'triceps', 'abs']],
-  [/push press/i,                   ['frontDelts', 'triceps', 'quads', 'abs']],
-  [/clean/i,                        ['quads', 'glutes', 'hamstrings', 'traps', 'lats', 'abs']],
-  [/snatch/i,                       ['quads', 'glutes', 'hamstrings', 'traps', 'lats', 'frontDelts', 'abs']],
-  [/jerk/i,                         ['frontDelts', 'triceps', 'quads', 'abs']],
-  [/pull.?up|chin.?up/i,            ['lats', 'biceps', 'rearDelts', 'forearms']],
-  [/row/i,                          ['lats', 'rearDelts', 'biceps', 'traps']],
-  [/thruster/i,                     ['quads', 'glutes', 'frontDelts', 'triceps', 'abs']],
-  [/lunge/i,                        ['quads', 'glutes', 'hamstrings']],
-  [/push.?up/i,                     ['chest', 'triceps', 'frontDelts']],
-  [/dip/i,                          ['chest', 'triceps', 'frontDelts']],
-  [/curl/i,                         ['biceps', 'forearms']],
-  [/tricep/i,                       ['triceps']],
-  [/box jump/i,                     ['quads', 'glutes', 'calves']],
-  [/kettlebell|swing/i,             ['glutes', 'hamstrings', 'lowerBack', 'abs']],
-  [/farmers? (carry|walk)/i,        ['forearms', 'traps']],
-  [/handstand/i,                    ['frontDelts', 'triceps', 'abs']],
-  [/muscle.?up/i,                   ['chest', 'lats', 'triceps', 'biceps']],
-  [/run|sprint/i,                   ['quads', 'hamstrings', 'calves', 'glutes']],
-  [/press/i,                        ['frontDelts', 'triceps']],
-];
-
-function getMusclesForTitle(title: string): Set<MuscleId> {
-  const s = new Set<MuscleId>();
-  for (const [re, list] of MUSCLE_RULES) if (re.test(title)) list.forEach(m => s.add(m));
-  return s;
-}
 
 // ── Heatmap helpers ──────────────────────────────────────────────────────────
 
 const DAYS   = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
-function getHeatColor(count: number, max: number, isDark: boolean): string {
+export function getHeatColor(count: number, max: number, isDark: boolean): string {
   if (count === 0) return isDark ? '#2c2e33' : '#e9ecef';
   const t = Math.min(count / Math.max(max, 1), 1);
   if (t < 0.25) return '#9775fa';
@@ -107,7 +76,7 @@ function getHeatColor(count: number, max: number, isDark: boolean): string {
 const THRESHOLD_NEGLECTED = 10;  // < 10% → neglected
 const THRESHOLD_LOW       = 25;  // < 25% → light
 
-function coverageStatus(pct: number): 'neglected' | 'low' | 'good' {
+export function coverageStatus(pct: number): 'neglected' | 'low' | 'good' {
   if (pct < THRESHOLD_NEGLECTED) return 'neglected';
   if (pct < THRESHOLD_LOW)       return 'low';
   return 'good';
@@ -126,6 +95,7 @@ interface HeatmapPageProps { workouts: Workout[] }
 export function HeatmapPage({ workouts }: HeatmapPageProps) {
   const { colorScheme } = useMantineColorScheme();
   const isDark = colorScheme === 'dark';
+  const dbLoaded = useExerciseDb();
 
   const years = useMemo(() => {
     const ys = new Set(workouts.map(w => dayjs(w.date).year()));
@@ -203,8 +173,8 @@ export function HeatmapPage({ workouts }: HeatmapPageProps) {
   const { muscleCounts, maxMuscleCount, activeMuscles } = useMemo(() => {
     const muscleCounts = new Map<MuscleId, number>();
     yearWorkouts.forEach(w => {
-      const muscles = getMusclesForTitle(w.title);
-      muscles.forEach(m => muscleCounts.set(m, (muscleCounts.get(m) ?? 0) + 1));
+      const weighted = getWeightedMuscles(w.title);
+      weighted.forEach((weight, m) => muscleCounts.set(m, (muscleCounts.get(m) ?? 0) + weight));
     });
     const maxMuscleCount = Math.max(...muscleCounts.values(), 1);
 
@@ -212,18 +182,20 @@ export function HeatmapPage({ workouts }: HeatmapPageProps) {
     if (selectedWorkouts.size > 0) {
       activeMuscles = new Set<MuscleId>();
       for (const name of selectedWorkouts) {
-        getMusclesForTitle(name).forEach(m => activeMuscles!.add(m));
+        getMusclesSet(name).forEach(m => activeMuscles!.add(m));
       }
     }
     return { muscleCounts, maxMuscleCount, activeMuscles };
-  }, [yearWorkouts, selectedWorkouts]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [yearWorkouts, selectedWorkouts, dbLoaded]);
 
   // Gap analysis data (recomputed from gapWorkouts for time-range sensitivity)
   const { gapMuscleCounts, gapMaxMuscleCount, gapTotalSessions, muscleGaps, balanceScore, lastTrainedByMuscle } = useMemo(() => {
     const gapMuscleCounts = new Map<MuscleId, number>();
     gapWorkouts.forEach(w => {
-      getMusclesForTitle(w.title).forEach(m =>
-        gapMuscleCounts.set(m, (gapMuscleCounts.get(m) ?? 0) + 1)
+      const weighted = getWeightedMuscles(w.title);
+      weighted.forEach((weight, m) =>
+        gapMuscleCounts.set(m, (gapMuscleCounts.get(m) ?? 0) + weight)
       );
     });
     const gapTotalSessions = gapWorkouts.length;
@@ -241,13 +213,14 @@ export function HeatmapPage({ workouts }: HeatmapPageProps) {
     const lastTrainedByMuscle = new Map<MuscleId, string>();
     const sorted = [...workouts].sort((a, b) => b.date.localeCompare(a.date));
     for (const w of sorted) {
-      getMusclesForTitle(w.title).forEach(m => {
+      getMusclesSet(w.title).forEach(m => {
         if (!lastTrainedByMuscle.has(m)) lastTrainedByMuscle.set(m, w.date);
       });
     }
 
     return { gapMuscleCounts, gapMaxMuscleCount, gapTotalSessions, muscleGaps, balanceScore, lastTrainedByMuscle };
-  }, [gapWorkouts, workouts]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gapWorkouts, workouts, dbLoaded]);
 
   const gapData: GapData = useMemo(() => ({
     entries: muscleGaps,

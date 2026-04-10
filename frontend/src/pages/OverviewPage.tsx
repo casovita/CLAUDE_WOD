@@ -10,6 +10,7 @@ import {
   Center,
   Button,
   ThemeIcon,
+  Progress,
 } from '@mantine/core';
 import {
   IconBarbell,
@@ -17,6 +18,8 @@ import {
   IconFlame,
   IconCalendar,
   IconUpload,
+  IconBodyScan,
+  IconTool,
 } from '@tabler/icons-react';
 import { useNavigate } from 'react-router-dom';
 import { useMemo } from 'react';
@@ -32,6 +35,7 @@ import {
 import type { Workout } from '../types/workout';
 import dayjs from 'dayjs';
 import isoWeek from 'dayjs/plugin/isoWeek';
+import { useExerciseDb, getWeightedMuscles, getMuscleMatch } from '../lib/exerciseDb';
 
 dayjs.extend(isoWeek);
 
@@ -66,8 +70,18 @@ interface OverviewPageProps {
   workouts: Workout[];
 }
 
+// Human-readable labels for MuscleId values
+const MUSCLE_LABELS: Record<string, string> = {
+  chest: 'Chest', frontDelts: 'Shoulders', rearDelts: 'Rear Delts',
+  triceps: 'Triceps', biceps: 'Biceps', forearms: 'Forearms',
+  lats: 'Lats', traps: 'Traps', lowerBack: 'Lower Back',
+  abs: 'Abs', obliques: 'Obliques', quads: 'Quads',
+  hamstrings: 'Hamstrings', glutes: 'Glutes', calves: 'Calves',
+};
+
 export function OverviewPage({ workouts }: OverviewPageProps) {
   const navigate = useNavigate();
+  const dbLoaded = useExerciseDb();
 
   const stats = useMemo(() => {
     const total = workouts.length;
@@ -103,8 +117,36 @@ export function OverviewPage({ workouts }: OverviewPageProps) {
       }
     }
 
-    return { total, prs, rxPct, activeWeeks, monthlyData, maxStreak };
-  }, [workouts]);
+    // Top muscle groups (weighted: primary=1.0, secondary=0.4)
+    const muscleTotals = new Map<string, number>();
+    for (const w of workouts) {
+      const weighted = getWeightedMuscles(w.title);
+      for (const [muscle, weight] of weighted) {
+        muscleTotals.set(muscle, (muscleTotals.get(muscle) ?? 0) + weight);
+      }
+    }
+    const topMuscles = [...muscleTotals.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 6)
+      .map(([id, score]) => ({ id, label: MUSCLE_LABELS[id] ?? id, score }));
+    const maxMuscleScore = topMuscles[0]?.score ?? 1;
+
+    // Equipment breakdown
+    const equipmentCounts = new Map<string, number>();
+    for (const w of workouts) {
+      const match = getMuscleMatch(w.title);
+      if (match.equipment) {
+        const eq = match.equipment;
+        equipmentCounts.set(eq, (equipmentCounts.get(eq) ?? 0) + 1);
+      }
+    }
+    const topEquipment = [...equipmentCounts.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([name, count]) => ({ name, count }));
+
+    return { total, prs, rxPct, activeWeeks, monthlyData, maxStreak, topMuscles, maxMuscleScore, topEquipment };
+  }, [workouts, dbLoaded]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (workouts.length === 0) {
     return (
@@ -199,6 +241,52 @@ export function OverviewPage({ workouts }: OverviewPageProps) {
           </ResponsiveContainer>
         </Paper>
       </SimpleGrid>
+
+      {(stats.topMuscles.length > 0 || stats.topEquipment.length > 0) && (
+        <SimpleGrid cols={{ base: 1, sm: 2 }}>
+          {stats.topMuscles.length > 0 && (
+            <Paper withBorder p="md" radius="md">
+              <Group gap="xs" mb="md">
+                <IconBodyScan size={16} />
+                <Text fw={600}>Top Muscle Groups</Text>
+              </Group>
+              <Stack gap={8}>
+                {stats.topMuscles.map(({ id, label, score }) => (
+                  <div key={id}>
+                    <Group justify="space-between" mb={2}>
+                      <Text size="sm">{label}</Text>
+                      <Text size="xs" c="dimmed">{Math.round(score)}</Text>
+                    </Group>
+                    <Progress
+                      value={(score / stats.maxMuscleScore) * 100}
+                      color="violet"
+                      size="sm"
+                      radius="xl"
+                    />
+                  </div>
+                ))}
+              </Stack>
+            </Paper>
+          )}
+
+          {stats.topEquipment.length > 0 && (
+            <Paper withBorder p="md" radius="md">
+              <Group gap="xs" mb="md">
+                <IconTool size={16} />
+                <Text fw={600}>Equipment Used</Text>
+              </Group>
+              <Stack gap={8}>
+                {stats.topEquipment.map(({ name, count }) => (
+                  <Group key={name} justify="space-between">
+                    <Text size="sm" tt="capitalize">{name}</Text>
+                    <Badge size="sm" variant="light" color="violet">{count}</Badge>
+                  </Group>
+                ))}
+              </Stack>
+            </Paper>
+          )}
+        </SimpleGrid>
+      )}
 
       <Paper withBorder p="md" radius="md">
         <Text fw={600} mb="xs">Recent Workouts</Text>

@@ -12,10 +12,13 @@ import {
   Pagination,
   ActionIcon,
   Box,
+  Image,
+  Skeleton,
 } from '@mantine/core';
 import { IconSearch, IconChevronDown, IconChevronUp } from '@tabler/icons-react';
 import type { Workout } from '../types/workout';
 import dayjs from 'dayjs';
+import { useExerciseDb, getMuscleMatch } from '../lib/exerciseDb';
 
 interface WorkoutLogPageProps {
   workouts: Workout[];
@@ -24,6 +27,7 @@ interface WorkoutLogPageProps {
 const PAGE_SIZE = 20;
 
 export function WorkoutLogPage({ workouts }: WorkoutLogPageProps) {
+  const dbLoaded = useExerciseDb();
   const [search, setSearch] = useState('');
   const [scoreFilter, setScoreFilter] = useState<string | null>(null);
   const [rxFilter, setRxFilter] = useState<string | null>(null);
@@ -136,7 +140,7 @@ export function WorkoutLogPage({ workouts }: WorkoutLogPageProps) {
                       </Badge>
                     </Table.Td>
                     <Table.Td>
-                      {(w.description || w.notes) && (
+                      {(w.description || w.notes || dbLoaded) && (
                         <ActionIcon
                           variant="subtle"
                           size="sm"
@@ -151,12 +155,43 @@ export function WorkoutLogPage({ workouts }: WorkoutLogPageProps) {
                     <Table.Tr>
                       <Table.Td colSpan={6}>
                         <Box p="sm" bg="var(--mantine-color-default-hover)" style={{ borderRadius: 8 }}>
-                          {w.description && (
-                            <Text size="sm" mb={w.notes ? 'xs' : 0}>{w.description}</Text>
-                          )}
-                          {w.notes && (
-                            <Text size="sm" c="dimmed" fs="italic">Notes: {w.notes}</Text>
-                          )}
+                          {(() => {
+                            const match = dbLoaded ? getMuscleMatch(w.title) : null;
+                            return (
+                              <Group align="flex-start" gap="md" wrap="nowrap">
+                                {match?.imageUrl && (
+                                  <Skeleton visible={false} w={80} h={80} radius="md" style={{ flexShrink: 0 }}>
+                                    <Image
+                                      src={match.imageUrl}
+                                      w={80}
+                                      h={80}
+                                      radius="md"
+                                      fit="cover"
+                                      onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
+                                    />
+                                  </Skeleton>
+                                )}
+                                <Stack gap={6} style={{ flex: 1 }}>
+                                  {match && (match.primary.length > 0 || match.secondary.length > 0) && (
+                                    <Group gap={4} wrap="wrap">
+                                      {match.primary.map(m => (
+                                        <Badge key={m} size="xs" variant="light" color="violet">{m}</Badge>
+                                      ))}
+                                      {match.secondary.map(m => (
+                                        <Badge key={m} size="xs" variant="outline" color="gray">{m}</Badge>
+                                      ))}
+                                    </Group>
+                                  )}
+                                  {w.description && (
+                                    <Text size="sm">{w.description}</Text>
+                                  )}
+                                  {w.notes && (
+                                    <Text size="sm" c="dimmed" fs="italic">Notes: {w.notes}</Text>
+                                  )}
+                                </Stack>
+                              </Group>
+                            );
+                          })()}
                         </Box>
                       </Table.Td>
                     </Table.Tr>
