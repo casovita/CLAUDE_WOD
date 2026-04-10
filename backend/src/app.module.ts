@@ -6,6 +6,8 @@ import { HttpLoggerMiddleware } from './common/http-logger.middleware';
 import { UploadModule } from './upload/upload.module';
 import { AuthModule } from './auth/auth.module';
 import { GmailModule } from './gmail/gmail.module';
+import { AppController } from './app.controller';
+import { AppService } from './app.service';
 
 @Module({
   imports: [
@@ -15,6 +17,8 @@ import { GmailModule } from './gmail/gmail.module';
     AuthModule,
     GmailModule,
   ],
+  controllers: [AppController],
+  providers: [AppService],
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {
