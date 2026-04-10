@@ -18,7 +18,7 @@ import {
   IconFlame,
   IconCalendar,
   IconUpload,
-  IconMuscle,
+  IconBodyScan,
   IconTool,
 } from '@tabler/icons-react';
 import { useNavigate } from 'react-router-dom';
@@ -247,7 +247,7 @@ export function OverviewPage({ workouts }: OverviewPageProps) {
           {stats.topMuscles.length > 0 && (
             <Paper withBorder p="md" radius="md">
               <Group gap="xs" mb="md">
-                <IconMuscle size={16} />
+                <IconBodyScan size={16} />
                 <Text fw={600}>Top Muscle Groups</Text>
               </Group>
               <Stack gap={8}>
